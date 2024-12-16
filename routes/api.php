@@ -6,6 +6,8 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\controlcontroller;
 use App\Http\Controllers\JuegoController;
+use GuzzleHttp\Middleware;
+
 /*
 |--------------------------------------------------------------------------
 | API Routes
@@ -27,23 +29,33 @@ Route::group([
 ], function ($router) {
     
     Route::post('register', [AuthController::class, 'register']);
-    Route::post('login', [AuthController::class, 'login']);
+    Route::post('login', [AuthController::class, 'login'])->Middleware('rol');
     Route::post('logout', [AuthController::class, 'logout']);
     Route::post('refresh', [AuthController::class, 'refresh']);
     Route::post('me', [AuthController::class, 'me']);
+    Route::get('activacion/{numero_cuenta}', [controlcontroller::class, 'index'])->name('activacion');
     Route::post('send-activation-code', [AuthController::class, 'sendActivationCode']);
     
 }); 
 
-Route::get('control/{numero_cuenta}', [controlcontroller::class, 'index'])->name('activacion');
-Route::post('juego', [JuegoController::class, 'iniciarJuego']);
-Route::post('juego/historial',[JuegoController::class,'historialJuegos']);
-Route::get('juego', [JuegoController::class, 'MostrarDisponibles']);
-Route::get('juego/unirse/{juegoId}', [JuegoController::class, 'unirseAJuego']);
-Route::get('juego/resultados', [JuegoController::class, 'consultarResultados']);
-Route::post('juego/salir', [JuegoController::class, 'abandonarjuego']);
-Route::post('juego/{letra}', [JuegoController::class, 'jugar'])
-->where('letra', '^[a-zA-Z]$');
-Route::get('admin/juegos', [Administrador::class, 'adminHistorialJuegos']);
-Route::post('admin',[Administrador::class,'DesactivarCuenta']);
-Route::get('admin',[Administrador::class,'VerTodaaslaspartidas']);
+Route::middleware(['auth.jwt','rol'])->group(function (){
+    Route::post('juego', [JuegoController::class, 'iniciarJuego']);
+    Route::get('juego', [JuegoController::class, 'MostrarDisponibles']);
+    Route::post('juego/unirse/{juegoId}', [JuegoController::class, 'unirseAJuego']);
+    Route::post('juego/{letra}', [JuegoController::class, 'jugar'])
+    ->where('letra', '^[a-zA-Z]$');
+    Route::post('juego/salir', [JuegoController::class, 'abandonarjuego']);
+    Route::get('juego/resultados', [JuegoController::class, 'consultarResultados']);
+    Route::post('juego/historial',[JuegoController::class,'historialJuegos']);
+
+});
+
+
+
+
+Route::middleware(['auth.jwt', 'admin'])->group(function () {
+    Route::get('admin/juegos', [Administrador::class, 'adminHistorialJuegos']);
+    Route::post('admin/{id}',[Administrador::class,'DesactivarCuenta'])
+    ->where('id', '[0-9]+');
+    Route::get('admin',[Administrador::class,'VerTodaaslaspartidas']);
+});

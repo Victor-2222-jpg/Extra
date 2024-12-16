@@ -12,6 +12,8 @@ use Database\Factories\SpanishWordProvider;
 use GuzzleHttp\Psr7\Response;
 use Illuminate\Support\Facades\Http;
 use App\Jobs\EnviarResumenSlack;
+use App\Jobs\EnviarResumenSlackJob;
+use App\Models\JuegoHistorial;
 
 class JuegoController extends Controller
 {
@@ -32,15 +34,15 @@ class JuegoController extends Controller
         $juego = Juego::create([
             'user_id' => $user,
             'adivinadas' => json_encode([]),
-            'status' => 'en progreso'
-
-            
+            'status' => 'Iniciada',
+            'palabra' => $palabra,
+            'intentos_restantes' => env('MAX_ATTEMPTS', 5)
         ]);
 
         $this->enviarMensajeWhatsApp('+5218713944040', "¡Juego iniciado! La palabra tiene " . strlen($palabra) . " letras.");
         return response()->json([
             'message' => 'Juego iniciado',
-            'juego' => $juego,
+            'juego_id' => $juego->id ,
             'palabra_oculta' => str_repeat('_', strlen($palabra))
         ], 201);
     }
@@ -104,8 +106,7 @@ class JuegoController extends Controller
     }
     
     $juego = Juego::where('id', $juegoId)
-        ->where('status', 'en progreso')
-        ->whereNull('user_id')
+        ->where('status', 'Iniciada')
         ->first();
     
     if (!$juego) {
@@ -114,7 +115,13 @@ class JuegoController extends Controller
         ], 404);
     }
     $juego->user_id = $user;
+    $juego->status = 'en progreso';
     $juego->save();
+
+    $this->enviarMensajeWhatsApp(
+        '+5218713944040', 
+        "Te has unido al juego #{$juego->id}. La palabra tiene " . strlen($juego->palabra) . " letras."
+    );
     
     return response()->json([
         'message' => 'Te has unido al juego exitosamente',
@@ -124,70 +131,88 @@ class JuegoController extends Controller
 }
 
 public function jugar(string $letra) 
-    {
-        $user = auth()->user()->id;
-        $juego = Juego::where('user_id', $user)
-            ->where('status', 'en progreso')
-            ->orderBy('id', 'desc') 
-            ->first();
+{
+    $user = auth()->user()->id;
+    $juego = Juego::where('user_id', $user)
+        ->where('status', 'en progreso')
+        ->orderBy('id', 'desc') 
+        ->first();
 
-        if (!$juego) {
-            return response()->json([
-                'message' => 'No tienes un juego en progreso.',
-            ], 404);
-        }
-        $letra = strtolower($letra);
-       
-        if (strlen($letra) !== 1) {
-            return response()->json([
-                'message' => 'Debes ingresar una sola letra',
-                'estado' => 'error'
-            ], 400);
-        }
-    
-    
-        $adivinadas = json_decode($juego->adivinadas, true) ?? [];
-    
-        
-        if (in_array($letra, $adivinadas)) {
-            return response()->json([
-                'message' => 'Ya intentaste esta letra',
-                'palabra_actual' => $this->mostrarPalabra($juego->palabra, $adivinadas),
-                'estado' => 'repetida'
-            ], 400);
-        }
-    
-        $adivinadas[] = $letra;
-        $juego->adivinadas = json_encode($adivinadas);
-        
-        if (strpos($juego->palabra, $letra) === false) {
-            $juego->intentos_restantes--;
-        }
-        $palabraActual = $this->mostrarPalabra($juego->palabra, $adivinadas);
-        
-        if ($palabraActual === $juego->palabra) {
-            $juego->status = 'ganado';
-            $mensaje = "¡Felicidades! Has ganado. La palabra era: {$juego->palabra}";
-        } elseif ($juego->intentos_restantes <= 0) {
-            $juego->status = 'perdido';
-            $mensaje = "Game Over. La palabra era: {$juego->palabra}";
-        } else {
-            $mensaje = "Te quedan {$juego->intentos_restantes} intentos";
-        }
-    
-        $juego->save();
-        
-        $this->enviarMensajeWhatsApp('+5218713944040', $mensaje);
-    
+    if (!$juego) {
         return response()->json([
-            'message' => $mensaje,
-            'palabra_actual' => $palabraActual,
-            'letras_adivinadas' => $adivinadas,
-            'intentos_restantes' => $juego->intentos_restantes,
-            'estado' => $juego->status
-        ]);
+            'message' => 'No tienes un juego en progreso.',
+        ], 404);
     }
 
+    $letra = strtolower($letra);
+   
+    if (strlen($letra) !== 1) {
+        return response()->json([
+            'message' => 'Debes ingresar una sola letra',
+            'estado' => 'error'
+        ], 400);
+    }
+
+    $adivinadas = json_decode($juego->adivinadas, true) ?? [];
+    
+    if (in_array($letra, $adivinadas)) {
+        $mensaje = 'Ya intentaste esta letra';
+        return response()->json([
+            'message' => 'Ya intentaste esta letra',
+            'palabra_actual' => $this->mostrarPalabra($juego->palabra, $adivinadas),
+            'estado' => 'repetida'
+        ], 400);
+    }
+
+    $adivinadas[] = $letra;
+    $juego->adivinadas = json_encode($adivinadas);
+    
+    $acierto = strpos($juego->palabra, $letra) !== false;
+    if (!$acierto) {
+        $juego->intentos_restantes--;
+    }
+
+    $palabraActual = $this->mostrarPalabra($juego->palabra, $adivinadas);
+    
+    if ($palabraActual === $juego->palabra) {
+        $juego->status = 'ganado';
+        $mensaje = "¡Felicidades! Has ganado. La palabra era: {$juego->palabra}";
+    } elseif ($juego->intentos_restantes <= 0) {
+        $juego->status = 'perdido';
+        $mensaje = "Game Over. La palabra era: {$juego->palabra}";
+    } else {
+        $mensaje = "Te quedan {$juego->intentos_restantes} intentos";
+    }
+
+    
+    JuegoHistorial::create([
+        'juego_id' => $juego->id,
+        'user_id' => $user,
+        'letra' => $letra,
+        'palabra_actual' => $palabraActual,
+        'intentos_restantes' => $juego->intentos_restantes,
+        'acierto' => $acierto,
+        'estado_juego' => $juego->status
+    ]);
+
+    $juego->save();
+
+   
+    if ($juego->status === 'ganado' || $juego->status === 'perdido') {
+        
+        EnviarResumenSlack::dispatch($juego->id)->delay(now()->addMinute());
+    }
+    
+    $this->enviarMensajeWhatsApp('+5218713944040', $mensaje);
+
+    return response()->json([
+        'message' => $mensaje,
+        'palabra_actual' => $palabraActual,
+        'letras_intentadas' => $adivinadas,
+        'intentos_restantes' => $juego->intentos_restantes,
+        'estado' => $juego->status
+    ]);
+}
     
     public function mostrarPalabra($palabra, $adivinadas)
     {
@@ -228,7 +253,7 @@ public function jugar(string $letra)
             ], 404);
         }
 
-        $juego->status = 'Finalizada';
+        $juego->status = 'perdido';
         $juego->save();
 
         $this->enviarMensajeWhatsApp('+5218713944040', "Has abandonado el juego. La palabra era: {$juego->palabra}");
@@ -241,22 +266,23 @@ public function jugar(string $letra)
 
     public function MostrarDisponibles()
 {
-    $juegos = Juego::where('status', 'en progreso')
-        ->whereNull('user_id')
+    $juegos = Juego::where('status', 'Iniciada')
         ->orderBy('id', 'desc')
-        ->get()
-        ->map(function($juego) {
-            return [
+        ->get();
+        $juegosdatos = [];
+        foreach ($juegos as $juego) {
+            $juegosdatos[] = [
                 'id' => $juego->id,
-                'palabra_longitud' => strlen($juego->palabra),
-                'intentos_maximos' => env('MAX_ATTEMPTS', 5),
-                'created_at' => $juego->created_at->format('Y-m-d H:i:s')
+                'usuario' => $juego->user->id,
+                'palabra' => str_repeat('*', strlen($juego->palabra)),
+                'intentos_restantes' => $juego->intentos_restantes,
+                'fecha_inicio' => $juego->created_at->format('Y-m-d H:i:s')
             ];
-        });
+        }
 
     return response()->json([
         'message' => 'Juegos disponibles',
-        'juegos' => $juegos
+        'juegos' => $juegosdatos
     ]);
 }
 
@@ -270,17 +296,6 @@ public function consultarResultados(Request $request)
     
     $query = Juego::where('user_id', $user);
     
-    if ($request->has('estado')) {
-        $query->where('status', $request->estado);
-    }
-    
-    if ($request->has('fecha_inicio')) {
-        $query->whereDate('created_at', '>=', $request->fecha_inicio);
-    }
-    
-    if ($request->has('fecha_fin')) {
-        $query->whereDate('created_at', '<=', $request->fecha_fin);
-    }
     
     $juegos = $query->orderBy('created_at', 'desc')->get();
     
@@ -288,10 +303,7 @@ public function consultarResultados(Request $request)
         'total_juegos' => $juegos->count(),
         'juegos_ganados' => $juegos->where('status', 'ganado')->count(),
         'juegos_perdidos' => $juegos->where('status', 'perdido')->count(),
-        'juegos_abandonados' => $juegos->where('status', 'abandonado')->count(),
-        'porcentaje_victoria' => $juegos->count() > 0 
-            ? round(($juegos->where('status', 'ganado')->count() / $juegos->count()) * 100, 2) 
-            : 0
+        'juegos_abandonados' => $juegos->where('status', 'abandonado')->count()
     ];
     
     $historial = [];
@@ -323,7 +335,6 @@ public function consultarResultados(Request $request)
     private function obtenerPalabraAleatoria()
 {
     try {
-        // Usar la API de palabras aleatorias en español
         $response = Http::get('https://random-word-api.herokuapp.com/word', [
             'lang' => 'es',
             'number' => 1
@@ -333,12 +344,12 @@ public function consultarResultados(Request $request)
             return strtolower($response->json()[0]);
         }
 
-        // Si la API falla, usar palabra de respaldo
+       
         throw new \Exception('Error obteniendo palabra de la API');
 
     } catch (\Exception $e) {
         Log::error('Error obteniendo palabra aleatoria: ' . $e->getMessage());
-        // Usar generador de palabras alternativo o palabra de respaldo
+        
         return $this->generarPalabraAlternativa();
     }
 }
@@ -359,20 +370,12 @@ private function generarPalabraAlternativa()
     
     return $palabra;
 }
-
+//historial para juegos por usuario
 public function historialJuegos(Request $request)
 {
     $user = auth()->user()->id;
-    
-    // Construir la consulta base
     $query = Juego::where('user_id', $user);
     
-    // Aplicar filtro por estado si se proporciona
-    if ($request->has('estado')) {
-        $query->where('status', $request->estado);
-    }
-    
-    // Obtener juegos ordenados por más recientes
     $juegos_raw = $query->orderBy('created_at', 'desc')->get();
     
     $historial = [];
@@ -380,7 +383,6 @@ public function historialJuegos(Request $request)
     $juegos_perdidos = 0;
     
     foreach ($juegos_raw as $juego) {
-        // Contar estadísticas
         if ($juego->status === 'ganado') {
             $juegos_ganados++;
         } elseif ($juego->status === 'perdido') {
@@ -392,7 +394,7 @@ public function historialJuegos(Request $request)
             'id' => $juego->id,
             'palabra' => $juego->palabra,
             'estado' => $juego->status,
-            'intentos_realizados' => env('MAX_ATTEMPTS', 6) - $juego->intentos_restantes,
+            'intentos_realizados' => env('MAX_ATTEMPTS', 5) - $juego->intentos_restantes,
             'intentos_restantes' => $juego->intentos_restantes,
             'letras_adivinadas' => json_decode($juego->adivinadas, true),
             'fecha' => $juego->created_at->format('Y-m-d H:i:s'),

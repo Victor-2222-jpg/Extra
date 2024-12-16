@@ -13,13 +13,15 @@ return new class extends Migration
      */
     public function up()
     {
-        Schema::create('juego', function (Blueprint $table) {
+        Schema::create('juego_historial', function (Blueprint $table) {
             $table->id();
+            $table->foreignId('juego_id')->constrained('juego')->onDelete('cascade');
             $table->foreignId('user_id')->constrained()->onDelete('cascade');
-            $table->string('palabra');
-            $table->json('adivinadas')->default(json_encode([]))->nullable();
-            $table->integer('intentos_restantes')->nullable();
-            $table->enum('status', ['Iniciada','en progreso', 'ganado', 'perdido','Finalizada'])->default('en progreso'); 
+            $table->char('letra', 1);
+            $table->string('palabra_actual');
+            $table->integer('intentos_restantes');
+            $table->boolean('acierto');
+            $table->string('estado_juego');
             $table->timestamps();
         });
     }
@@ -31,6 +33,6 @@ return new class extends Migration
      */
     public function down()
     {
-        Schema::dropIfExists('juego');
+        //
     }
 };

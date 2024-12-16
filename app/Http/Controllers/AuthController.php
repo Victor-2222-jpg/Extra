@@ -82,8 +82,7 @@ class AuthController extends Controller
         ]);
     
         return response()->json([
-            'laravel_token' => $token,
-            //'adonis_token' => $atoken,
+            'token' => $token,
         ]);
     }
 

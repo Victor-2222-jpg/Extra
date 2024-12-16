@@ -27,4 +27,10 @@ class Juego extends Model
     {
         return $this->belongsTo(User::class);
     }
+
+    public function historial()
+    {
+        return $this->hasMany(JuegoHistorial::class, 'juego_id');
+    }
+
 }
